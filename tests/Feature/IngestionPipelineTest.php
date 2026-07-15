@@ -108,6 +108,7 @@ class IngestionPipelineTest extends TestCase
                     ],
                 ],
                 'next_cursor' => null,
+                'has_more' => false,
             ], 200),
         ]);
 
@@ -143,6 +144,7 @@ class IngestionPipelineTest extends TestCase
                     ['external_id' => 'rec-001', 'version' => 1, 'updated_at' => '2024-01-01T10:00:00Z', 'name' => 'Alice Johnson', 'email' => 'alice@example.com'],
                 ],
                 'next_cursor' => 'page-2',
+                'has_more' => true,
             ],
             'page-2' => [
                 'data' => [
@@ -150,6 +152,7 @@ class IngestionPipelineTest extends TestCase
                     ['external_id' => 'rec-001', 'version' => 2, 'updated_at' => '2024-02-01T10:00:00Z', 'name' => 'Alice Johnson', 'email' => 'alice.updated@example.com'],
                 ],
                 'next_cursor' => 'page-3',
+                'has_more' => true,
             ],
             'page-3' => [
                 'data' => [
@@ -157,6 +160,7 @@ class IngestionPipelineTest extends TestCase
                     ['external_id' => 'rec-001', 'version' => 1, 'updated_at' => '2024-01-01T10:00:00Z', 'name' => 'Alice Johnson Old', 'email' => 'alice.old@example.com'],
                 ],
                 'next_cursor' => 'page-4',
+                'has_more' => true,
             ],
             'page-4' => [
                 'data' => [
@@ -165,6 +169,7 @@ class IngestionPipelineTest extends TestCase
                     ['external_id' => 'rec-bad-version', 'version' => 'two', 'updated_at' => '2024-03-03T10:00:00Z', 'name' => 'Bad Version'],
                 ],
                 'next_cursor' => 'page-5',
+                'has_more' => true,
             ],
             'page-5' => [
                 'data' => [
@@ -173,6 +178,7 @@ class IngestionPipelineTest extends TestCase
                     ['external_id' => 'rec-bad-name', 'version' => 1, 'updated_at' => '2024-04-02T10:00:00Z', 'name' => 12345],
                 ],
                 'next_cursor' => null,
+                'has_more' => false,
             ],
         ];
 

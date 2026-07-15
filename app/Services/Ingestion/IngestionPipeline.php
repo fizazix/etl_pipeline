@@ -34,7 +34,7 @@ class IngestionPipeline
 
         try {
             while (true) {
-                $page = $this->sourceApiClient->fetchPage($cursor);
+                $page = $this->sourceApiClient->fetchPage($cursor, (int) config('ingestion.page_size'));
                 $pageCursor = $cursor ?? 'start';
 
                 DB::transaction(function () use ($page, $pageCursor, &$cursor, $checkpoint, $pipelineName) {

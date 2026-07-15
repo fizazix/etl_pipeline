@@ -2,9 +2,9 @@
 
 return [
     'pipeline_name' => env('INGESTION_PIPELINE_NAME', 'default'),
-    'source_api_url' => env('SOURCE_API_URL', 'http://source-api:8080/records'),
-    'max_retries' => (int) env('INGESTION_MAX_RETRIES', 5),
-    'backoff_base_ms' => (int) env('INGESTION_BACKOFF_BASE_MS', 200),
-    'backoff_max_ms' => (int) env('INGESTION_BACKOFF_MAX_MS', 5000),
-    'request_timeout_seconds' => (int) env('INGESTION_REQUEST_TIMEOUT', 10),
+    'source_api_url' => env('SOURCE_API_URL', 'http://source-api:8081/records'),
+    'request_timeout_seconds' => (int) env('SOURCE_API_TIMEOUT', 5),
+    'page_size' => (int) env('SOURCE_API_PAGE_SIZE', 50),
+    'requests_per_second' => (int) env('SOURCE_API_REQUESTS_PER_SECOND', 4),
+    'max_attempts' => (int) env('SOURCE_API_MAX_ATTEMPTS', 5),
 ];
