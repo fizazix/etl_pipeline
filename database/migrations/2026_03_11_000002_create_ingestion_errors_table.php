@@ -10,14 +10,20 @@ return new class extends Migration
     {
         Schema::create('ingestion_errors', function (Blueprint $table) {
             $table->id();
-            $table->string('external_id')->default('');
-            $table->string('source_cursor');
+            $table->string('source_id')->nullable();
+            $table->string('source_cursor')->nullable();
+            $table->string('error_type');
+            $table->json('error_details');
             $table->json('raw_payload');
-            $table->text('error_message');
-            $table->string('error_code');
+            $table->char('fingerprint', 64)->unique();
+            $table->unsignedInteger('occurrence_count')->default(1);
+            $table->timestamp('first_seen_at');
+            $table->timestamp('last_seen_at');
             $table->timestamps();
 
-            $table->unique(['external_id', 'source_cursor', 'error_code'], 'ingestion_errors_idempotent');
+            $table->index('source_id');
+            $table->index('error_type');
+            $table->index('last_seen_at');
         });
     }
 

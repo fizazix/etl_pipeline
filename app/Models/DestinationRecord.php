@@ -7,10 +7,13 @@ use Illuminate\Database\Eloquent\Model;
 class DestinationRecord extends Model
 {
     protected $fillable = [
-        'external_id',
+        'source_id',
+        'name',
+        'email',
+        'status',
         'version',
         'source_updated_at',
-        'payload',
+        'raw_payload',
     ];
 
     protected function casts(): array
@@ -18,7 +21,7 @@ class DestinationRecord extends Model
         return [
             'version' => 'integer',
             'source_updated_at' => 'datetime',
-            'payload' => 'array',
+            'raw_payload' => 'array',
         ];
     }
 }

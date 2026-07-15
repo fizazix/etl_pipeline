@@ -11,11 +11,12 @@ return new class extends Migration
         Schema::create('pipeline_checkpoints', function (Blueprint $table) {
             $table->id();
             $table->string('pipeline_name')->unique();
-            $table->string('cursor')->nullable();
-            $table->string('status')->default('idle');
+            $table->string('next_cursor')->nullable();
+            $table->string('status')->default('pending');
             $table->text('last_error')->nullable();
-            $table->dateTime('started_at')->nullable();
-            $table->dateTime('completed_at')->nullable();
+            $table->timestamp('started_at')->nullable();
+            $table->timestamp('completed_at')->nullable();
+            $table->timestamp('last_successful_page_at')->nullable();
             $table->timestamps();
         });
     }

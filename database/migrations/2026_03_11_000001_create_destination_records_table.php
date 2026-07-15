@@ -10,11 +10,17 @@ return new class extends Migration
     {
         Schema::create('destination_records', function (Blueprint $table) {
             $table->id();
-            $table->string('external_id')->unique();
-            $table->unsignedInteger('version');
-            $table->dateTime('source_updated_at');
-            $table->json('payload');
+            $table->string('source_id')->unique();
+            $table->string('name');
+            $table->string('email');
+            $table->string('status');
+            $table->unsignedBigInteger('version');
+            $table->timestamp('source_updated_at', 6);
+            $table->json('raw_payload');
             $table->timestamps();
+
+            $table->index('status');
+            $table->index('source_updated_at');
         });
     }
 

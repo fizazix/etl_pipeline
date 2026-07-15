@@ -7,17 +7,25 @@ use Illuminate\Database\Eloquent\Model;
 class IngestionError extends Model
 {
     protected $fillable = [
-        'external_id',
+        'source_id',
         'source_cursor',
+        'error_type',
+        'error_details',
         'raw_payload',
-        'error_message',
-        'error_code',
+        'fingerprint',
+        'occurrence_count',
+        'first_seen_at',
+        'last_seen_at',
     ];
 
     protected function casts(): array
     {
         return [
+            'error_details' => 'array',
             'raw_payload' => 'array',
+            'occurrence_count' => 'integer',
+            'first_seen_at' => 'datetime',
+            'last_seen_at' => 'datetime',
         ];
     }
 }

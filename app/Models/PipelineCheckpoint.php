@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 
 class PipelineCheckpoint extends Model
 {
-    public const STATUS_IDLE = 'idle';
+    public const STATUS_PENDING = 'pending';
 
     public const STATUS_RUNNING = 'running';
 
@@ -16,11 +16,12 @@ class PipelineCheckpoint extends Model
 
     protected $fillable = [
         'pipeline_name',
-        'cursor',
+        'next_cursor',
         'status',
         'last_error',
         'started_at',
         'completed_at',
+        'last_successful_page_at',
     ];
 
     protected function casts(): array
@@ -28,6 +29,7 @@ class PipelineCheckpoint extends Model
         return [
             'started_at' => 'datetime',
             'completed_at' => 'datetime',
+            'last_successful_page_at' => 'datetime',
         ];
     }
 }
