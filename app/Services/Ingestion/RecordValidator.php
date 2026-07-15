@@ -2,63 +2,135 @@
 
 namespace App\Services\Ingestion;
 
+use DateTimeImmutable;
+
 class RecordValidator
 {
-    public function validate(array $record): ?array
+    private const ALLOWED_STATUSES = ['active', 'inactive', 'pending'];
+
+    public function validate(mixed $record): array
     {
-        if (! array_key_exists('external_id', $record) || $record['external_id'] === '' || $record['external_id'] === null) {
-            return $this->error('missing_external_id', 'The external_id field is required.');
+        if (! is_array($record)) {
+            return $this->invalid(
+                $record,
+                null,
+                [['field' => null, 'message' => 'The record must be an object.']]
+            );
         }
 
-        if (! is_string($record['external_id'])) {
-            return $this->error('invalid_external_id', 'The external_id field must be a string.');
+        $messages = [];
+        $sourceId = $this->extractSourceId($record);
+
+        if (! array_key_exists('id', $record) || $record['id'] === null || $record['id'] === '') {
+            $messages[] = ['field' => 'id', 'message' => 'The id field is required.'];
+        } elseif (! is_string($record['id'])) {
+            $messages[] = ['field' => 'id', 'message' => 'The id field must be a string.'];
+        } elseif (strlen($record['id']) > 100) {
+            $messages[] = ['field' => 'id', 'message' => 'The id field must not exceed 100 characters.'];
+        }
+
+        if (! array_key_exists('name', $record) || $record['name'] === null || $record['name'] === '') {
+            $messages[] = ['field' => 'name', 'message' => 'The name field is required.'];
+        } elseif (! is_string($record['name'])) {
+            $messages[] = ['field' => 'name', 'message' => 'The name field must be a string.'];
+        } elseif (strlen($record['name']) > 255) {
+            $messages[] = ['field' => 'name', 'message' => 'The name field must not exceed 255 characters.'];
+        }
+
+        if (! array_key_exists('email', $record) || $record['email'] === null || $record['email'] === '') {
+            $messages[] = ['field' => 'email', 'message' => 'The email field is required.'];
+        } elseif (! is_string($record['email'])) {
+            $messages[] = ['field' => 'email', 'message' => 'The email field must be a string.'];
+        } elseif (strlen($record['email']) > 255) {
+            $messages[] = ['field' => 'email', 'message' => 'The email field must not exceed 255 characters.'];
+        } else {
+            $trimmedEmail = trim($record['email']);
+
+            if (filter_var($trimmedEmail, FILTER_VALIDATE_EMAIL) === false) {
+                $messages[] = ['field' => 'email', 'message' => 'The email field must be a valid email address.'];
+            }
+        }
+
+        if (! array_key_exists('status', $record) || $record['status'] === null || $record['status'] === '') {
+            $messages[] = ['field' => 'status', 'message' => 'The status field is required.'];
+        } elseif (! is_string($record['status'])) {
+            $messages[] = ['field' => 'status', 'message' => 'The status field must be a string.'];
+        } elseif (! in_array($record['status'], self::ALLOWED_STATUSES, true)) {
+            $messages[] = ['field' => 'status', 'message' => 'The status field must be one of: active, inactive, pending.'];
         }
 
         if (! array_key_exists('version', $record)) {
-            return $this->error('missing_version', 'The version field is required.');
+            $messages[] = ['field' => 'version', 'message' => 'The version field is required.'];
+        } elseif (! is_int($record['version']) || $record['version'] < 1) {
+            $messages[] = ['field' => 'version', 'message' => 'The version field must be an integer of at least 1.'];
         }
 
-        if (! is_int($record['version']) || $record['version'] < 1) {
-            return $this->error('invalid_version', 'The version field must be a positive integer.');
+        if (! array_key_exists('updated_at', $record) || $record['updated_at'] === null || $record['updated_at'] === '') {
+            $messages[] = ['field' => 'updated_at', 'message' => 'The updated_at field is required.'];
+        } elseif (! is_string($record['updated_at'])) {
+            $messages[] = ['field' => 'updated_at', 'message' => 'The updated_at field must be a string.'];
+        } elseif ($this->parseUpdatedAt($record['updated_at']) === null) {
+            $messages[] = ['field' => 'updated_at', 'message' => 'The updated_at field must be a valid date.'];
         }
 
-        if (! array_key_exists('updated_at', $record) || $record['updated_at'] === '' || $record['updated_at'] === null) {
-            return $this->error('missing_updated_at', 'The updated_at field is required.');
+        if ($messages !== []) {
+            return $this->invalid($record, $sourceId, $messages);
         }
 
-        if (! is_string($record['updated_at']) || strtotime($record['updated_at']) === false) {
-            return $this->error('invalid_updated_at', 'The updated_at field must be a valid datetime string.');
-        }
-
-        if (! array_key_exists('name', $record) || $record['name'] === '' || $record['name'] === null) {
-            return $this->error('missing_name', 'The name field is required.');
-        }
-
-        if (! is_string($record['name'])) {
-            return $this->error('invalid_name', 'The name field must be a string.');
-        }
-
-        return null;
-    }
-
-    public function normalize(array $record): array
-    {
         return [
-            'external_id' => $record['external_id'],
-            'version' => $record['version'],
-            'source_updated_at' => date('Y-m-d H:i:s', strtotime($record['updated_at'])),
-            'payload' => [
+            'valid' => true,
+            'normalized' => [
+                'source_id' => $record['id'],
                 'name' => $record['name'],
-                'email' => $record['email'] ?? null,
+                'email' => strtolower(trim($record['email'])),
+                'status' => $record['status'],
+                'version' => $record['version'],
+                'source_updated_at' => $this->parseUpdatedAt($record['updated_at']),
+                'raw_payload' => $record,
             ],
         ];
     }
 
-    private function error(string $code, string $message): array
+    private function invalid(mixed $record, ?string $sourceId, array $messages): array
     {
         return [
-            'error_code' => $code,
-            'error_message' => $message,
+            'valid' => false,
+            'source_id' => $sourceId,
+            'raw_payload' => $record,
+            'error_type' => 'validation_error',
+            'error_details' => [
+                'messages' => $messages,
+            ],
         ];
+    }
+
+    private function extractSourceId(mixed $record): ?string
+    {
+        if (! is_array($record)) {
+            return null;
+        }
+
+        if (! array_key_exists('id', $record) || ! is_string($record['id']) || $record['id'] === '') {
+            return null;
+        }
+
+        return $record['id'];
+    }
+
+    private function parseUpdatedAt(string $value): ?string
+    {
+        try {
+            $date = new DateTimeImmutable($value);
+        } catch (\Exception) {
+            return null;
+        }
+
+        $errors = DateTimeImmutable::getLastErrors();
+
+        if ($errors !== false && ($errors['warning_count'] > 0 || $errors['error_count'] > 0)) {
+            return null;
+        }
+
+        return $date->format('Y-m-d H:i:s');
     }
 }

@@ -2,7 +2,6 @@
 
 namespace App\Services\Ingestion;
 
-use App\Models\IngestionError;
 use App\Models\PipelineCheckpoint;
 use Illuminate\Support\Facades\DB;
 use Throwable;
@@ -13,6 +12,7 @@ class IngestionPipeline
         private SourceApiClient $sourceApiClient,
         private RecordValidator $recordValidator,
         private DestinationWriter $destinationWriter,
+        private IngestionErrorWriter $errorWriter,
     ) {}
 
     public function run(): void
@@ -86,41 +86,16 @@ class IngestionPipeline
         );
     }
 
-    private function processRecord(array $record, string $pageCursor): void
+    private function processRecord(mixed $record, string $pageCursor): void
     {
-        $validationError = $this->recordValidator->validate($record);
+        $result = $this->recordValidator->validate($record);
 
-        if ($validationError !== null) {
-            $this->storeError(
-                $record,
-                $pageCursor,
-                $validationError['error_code'],
-                $validationError['error_message']
-            );
+        if (! $result['valid']) {
+            $this->errorWriter->upsertValidationError($result, $pageCursor);
 
             return;
         }
 
-        $normalized = $this->recordValidator->normalize($record);
-        $this->destinationWriter->upsert($normalized);
-    }
-
-    private function storeError(array $record, string $pageCursor, string $errorCode, string $errorMessage): void
-    {
-        $externalId = is_array($record) && array_key_exists('external_id', $record) && is_string($record['external_id']) && $record['external_id'] !== ''
-            ? $record['external_id']
-            : '';
-
-        IngestionError::updateOrCreate(
-            [
-                'external_id' => $externalId,
-                'source_cursor' => $pageCursor,
-                'error_code' => $errorCode,
-            ],
-            [
-                'raw_payload' => $record,
-                'error_message' => $errorMessage,
-            ]
-        );
+        $this->destinationWriter->upsert($result['normalized']);
     }
 }
