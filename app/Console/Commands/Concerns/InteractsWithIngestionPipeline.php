@@ -76,8 +76,14 @@ trait InteractsWithIngestionPipeline
     {
         $maxPages = $this->option('max-pages');
 
-        if ($maxPages === null || $maxPages === '') {
+        if ($maxPages === null || $maxPages === false || $maxPages === '') {
             return null;
+        }
+
+        if ($maxPages === true) {
+            $this->error('The --max-pages option must be a positive integer.');
+
+            return false;
         }
 
         if (is_int($maxPages)) {
@@ -90,13 +96,29 @@ trait InteractsWithIngestionPipeline
             return $maxPages;
         }
 
-        if (! is_string($maxPages) || ! ctype_digit($maxPages) || (int) $maxPages < 1) {
+        if (! is_scalar($maxPages)) {
             $this->error('The --max-pages option must be a positive integer.');
 
             return false;
         }
 
-        return (int) $maxPages;
+        $maxPagesString = trim((string) $maxPages);
+
+        if ($maxPagesString === '' || ! ctype_digit($maxPagesString)) {
+            $this->error('The --max-pages option must be a positive integer.');
+
+            return false;
+        }
+
+        $parsed = (int) $maxPagesString;
+
+        if ($parsed < 1) {
+            $this->error('The --max-pages option must be a positive integer.');
+
+            return false;
+        }
+
+        return $parsed;
     }
 
     private function renderPipelineSummary(): int
