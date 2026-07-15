@@ -6,7 +6,28 @@ Each source page is processed inside one MySQL transaction. Valid destination wr
 
 ## MySQL upsert for version control
 
-Destination writes use a single `INSERT ... ON DUPLICATE KEY UPDATE` statement with an `AS new` row alias. A user variable captures the accept/reject decision once from the existing row values, then all columns update consistently. Without that, later assignments in the same statement would see already-updated column values and could skip payload updates when only the version column changed first.
+Destination writes use a single `INSERT ... ON DUPLICATE KEY UPDATE` statement against `destination_records`, keyed by the unique `source_id` index. Columns written are `name`, `email`, `status`, `version`, `source_updated_at`, `raw_payload`, and `updated_at`.
+
+The statement uses a `VALUES (...) AS new` row alias (MySQL 8.0.19+). A user variable `@accept` captures the accept/reject decision once from the existing row values:
+
+```sql
+incoming version > stored version
+OR (incoming version = stored version AND incoming source_updated_at > stored source_updated_at)
+```
+
+That decision is assigned in the **first** `ON DUPLICATE KEY UPDATE` expression (`name = IF((@accept := <condition>), ...)`). Subsequent column assignments reuse `@accept` rather than re-evaluating the condition against partially-updated columns.
+
+MySQL evaluates duplicate-key updates left to right. Without the shared `@accept` variable, an early assignment to `version` or `source_updated_at` would change the values seen by later expressions and could accept or reject the wrong payload. A `SELECT ... FOR UPDATE` transaction would also work, but the single-statement `@accept` pattern is simpler and stays atomic.
+
+When the incoming row wins, all business fields and `updated_at` are replaced. When it loses, every column keeps its stored value, including `updated_at`.
+
+`DestinationWriter::upsert()` returns a per-row action without querying the table again:
+
+- `inserted` — new `source_id` (`@accept` was never assigned)
+- `updated` — duplicate key conflict and incoming row won (`@accept = 1`)
+- `ignored` — duplicate key conflict and incoming row lost (`@accept = 0`)
+
+The writer reads `SELECT @accept AS accept, ROW_COUNT() AS affected_rows` on the same connection immediately after the upsert.
 
 ## No queues or extra infrastructure
 
