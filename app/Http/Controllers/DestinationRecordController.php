@@ -10,11 +10,25 @@ class DestinationRecordController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $perPage = min((int) $request->query('per_page', 50), 100);
+        $validated = $request->validate([
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
+            'source_id' => ['sometimes', 'string'],
+            'status' => ['sometimes', 'string', 'in:active,inactive,pending'],
+        ]);
 
-        $records = DestinationRecord::query()
-            ->orderBy('external_id')
-            ->paginate($perPage);
+        $perPage = $validated['per_page'] ?? 50;
+
+        $query = DestinationRecord::query()->orderBy('source_id');
+
+        if (isset($validated['source_id'])) {
+            $query->where('source_id', $validated['source_id']);
+        }
+
+        if (isset($validated['status'])) {
+            $query->where('status', $validated['status']);
+        }
+
+        $records = $query->paginate($perPage);
 
         return response()->json([
             'data' => $records->items(),
@@ -25,5 +39,20 @@ class DestinationRecordController extends Controller
                 'last_page' => $records->lastPage(),
             ],
         ]);
+    }
+
+    public function show(string $sourceId): JsonResponse
+    {
+        $record = DestinationRecord::query()
+            ->where('source_id', $sourceId)
+            ->first();
+
+        if ($record === null) {
+            return response()->json([
+                'message' => 'Record not found.',
+            ], 404);
+        }
+
+        return response()->json($record);
     }
 }

@@ -5,8 +5,7 @@ use App\Http\Controllers\IngestionErrorController;
 use App\Http\Controllers\PipelineStatusController;
 use Illuminate\Support\Facades\Route;
 
-Route::get('/pipeline/status', [PipelineStatusController::class, 'status']);
-Route::get('/pipeline/loaded-count', [PipelineStatusController::class, 'loadedCount']);
-Route::get('/pipeline/rejected-count', [IngestionErrorController::class, 'count']);
-Route::get('/pipeline/rejected', [IngestionErrorController::class, 'index']);
-Route::get('/pipeline/loaded', [DestinationRecordController::class, 'index']);
+Route::get('/status', [PipelineStatusController::class, 'status']);
+Route::get('/records', [DestinationRecordController::class, 'index']);
+Route::get('/records/{sourceId}', [DestinationRecordController::class, 'show']);
+Route::get('/errors', [IngestionErrorController::class, 'index']);
