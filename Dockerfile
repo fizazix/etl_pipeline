@@ -13,10 +13,18 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /var/www/html
 
+COPY composer.json composer.lock ./
+RUN APP_KEY=base64:RW1haWxMaW5rVmVyaWZ5S2V5MTIzNDU2Nzg5MA== \
+    composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev --no-scripts
+
 COPY . .
 
-RUN chmod +x docker/entrypoint.sh
+RUN APP_KEY=base64:RW1haWxMaW5rVmVyaWZ5S2V5MTIzNDU2Nzg5MA== \
+    composer dump-autoload --optimize
+
+RUN mkdir -p storage/framework/cache storage/framework/sessions storage/framework/views storage/logs bootstrap/cache \
+    && chmod -R 775 storage bootstrap/cache
+
+RUN cp .env.example .env
 
 EXPOSE 8000
-
-ENTRYPOINT ["docker/entrypoint.sh"]

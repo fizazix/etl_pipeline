@@ -1,14 +1,30 @@
+x-laravel-env: &laravel-env
+  APP_NAME: EtlPipeline
+  APP_ENV: local
+  APP_DEBUG: "true"
+  APP_URL: http://localhost:8080
+  APP_KEY: base64:RW1haWxMaW5rVmVyaWZ5S2V5MTIzNDU2Nzg5MA==
+  DB_CONNECTION: mysql
+  DB_HOST: mysql
+  DB_PORT: 3306
+  DB_DATABASE: etl
+  DB_USERNAME: etl
+  DB_PASSWORD: secret
+  SOURCE_API_URL: http://source-api:8081
+  SOURCE_API_TIMEOUT: 5
+  SOURCE_API_PAGE_SIZE: 50
+  SOURCE_API_REQUESTS_PER_SECOND: 4
+  SOURCE_API_MAX_ATTEMPTS: 5
+
 services:
   mysql:
     image: mysql:8.4
-    command: --require_secure_transport=OFF
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --require_secure_transport=OFF
     environment:
       MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: ingestion
-      MYSQL_USER: ingestion
+      MYSQL_DATABASE: etl
+      MYSQL_USER: etl
       MYSQL_PASSWORD: secret
-    ports:
-      - "3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
@@ -17,13 +33,22 @@ services:
       timeout: 5s
       retries: 10
 
+  migrate:
+    build:
+      context: .
+    environment:
+      <<: *laravel-env
+    command: php artisan migrate --force
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: "no"
+
   source-api:
     build:
       context: ./source-api
-    ports:
-      - "8080:8080"
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8080/records"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8081/health"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -32,26 +57,24 @@ services:
     build:
       context: .
     ports:
-      - "8000:8000"
+      - "8080:8000"
     environment:
-      APP_NAME: IngestionPipeline
-      APP_ENV: local
-      APP_DEBUG: "true"
-      APP_URL: http://localhost:8000
-      DB_CONNECTION: mysql
-      DB_HOST: mysql
-      DB_PORT: 3306
-      DB_DATABASE: ingestion
-      DB_USERNAME: ingestion
-      DB_PASSWORD: secret
-      SOURCE_API_URL: http://source-api:8080/records
-      INGESTION_PIPELINE_NAME: default
-      INGESTION_MAX_RETRIES: 5
-      INGESTION_BACKOFF_BASE_MS: 100
-      INGESTION_BACKOFF_MAX_MS: 2000
+      <<: *laravel-env
+    command: php artisan serve --host=0.0.0.0 --port=8000
     depends_on:
-      mysql:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  etl:
+    build:
+      context: .
+    environment:
+      <<: *laravel-env
+    command: php artisan etl:run
+    restart: on-failure
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
       source-api:
         condition: service_healthy
 
