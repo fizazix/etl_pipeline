@@ -85,9 +85,12 @@ services:
       <<: *laravel-env
       APP_ENV: testing
       DB_DATABASE: etl_test
+      SOURCE_API_INTEGRATION: "true"
     command: sh docker/test.sh
     depends_on:
       mysql:
+        condition: service_healthy
+      source-api:
         condition: service_healthy
     restart: "no"
 
