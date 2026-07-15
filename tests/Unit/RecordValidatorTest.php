@@ -55,70 +55,78 @@ class RecordValidatorTest extends TestCase
 
     public static function invalidRecordProvider(): array
     {
+        $base = [
+            'id' => 'customer-001',
+            'name' => 'Alice',
+            'email' => 'alice@example.com',
+            'status' => 'active',
+            'version' => 1,
+            'updated_at' => '2024-01-01T10:00:00Z',
+        ];
+
         return [
             'missing id' => [
-                [
-                    'name' => 'Alice',
-                    'email' => 'alice@example.com',
-                    'status' => 'active',
-                    'version' => 1,
-                    'updated_at' => '2024-01-01T10:00:00Z',
-                ],
+                array_diff_key($base, ['id' => true]),
                 'id',
             ],
-            'invalid email type' => [
-                [
-                    'id' => 'customer-bad-email-int',
-                    'name' => 'Bad Email',
-                    'email' => 12345,
-                    'status' => 'active',
-                    'version' => 1,
-                    'updated_at' => '2024-01-01T10:00:00Z',
-                ],
+            'non-string id' => [
+                array_merge($base, ['id' => 12345]),
+                'id',
+            ],
+            'id too long' => [
+                array_merge($base, ['id' => str_repeat('a', 101)]),
+                'id',
+            ],
+            'missing name' => [
+                array_diff_key($base, ['name' => true]),
+                'name',
+            ],
+            'non-string name' => [
+                array_merge($base, ['name' => 12345]),
+                'name',
+            ],
+            'missing email' => [
+                array_diff_key($base, ['email' => true]),
                 'email',
             ],
-            'invalid status' => [
-                [
-                    'id' => 'customer-bad-status',
-                    'name' => 'Bad Status',
-                    'email' => 'bad@example.com',
-                    'status' => 'archived',
-                    'version' => 1,
-                    'updated_at' => '2024-01-01T10:00:00Z',
-                ],
+            'invalid email format' => [
+                array_merge($base, ['email' => 'not-an-email']),
+                'email',
+            ],
+            'invalid email type' => [
+                array_merge($base, ['email' => 12345]),
+                'email',
+            ],
+            'missing status' => [
+                array_diff_key($base, ['status' => true]),
                 'status',
             ],
+            'invalid status' => [
+                array_merge($base, ['status' => 'archived']),
+                'status',
+            ],
+            'missing version' => [
+                array_diff_key($base, ['version' => true]),
+                'version',
+            ],
+            'numeric string version' => [
+                array_merge($base, ['version' => '1']),
+                'version',
+            ],
             'invalid version string' => [
-                [
-                    'id' => 'customer-bad-version',
-                    'name' => 'Bad Version',
-                    'email' => 'bad@example.com',
-                    'status' => 'active',
-                    'version' => 'two',
-                    'updated_at' => '2024-01-01T10:00:00Z',
-                ],
+                array_merge($base, ['version' => 'two']),
                 'version',
             ],
             'invalid version zero' => [
-                [
-                    'id' => 'customer-bad-version-zero',
-                    'name' => 'Bad Version Zero',
-                    'email' => 'bad@example.com',
-                    'status' => 'active',
-                    'version' => 0,
-                    'updated_at' => '2024-01-01T10:00:00Z',
-                ],
+                array_merge($base, ['version' => 0]),
                 'version',
             ],
+            'missing updated_at' => [
+                array_diff_key($base, ['updated_at' => true]),
+                'updated_at',
+            ],
             'invalid date' => [
-                [
-                    'id' => 'customer-bad-date',
-                    'name' => 'Bad Date',
-                    'email' => 'bad@example.com',
-                    'status' => 'active',
-                    'version' => 1,
-                    'updated_at' => 'not-a-date',
-                ],
+                array_merge($base, ['updated_at' => 'not-a-date']),
                 'updated_at',
             ],
         ];

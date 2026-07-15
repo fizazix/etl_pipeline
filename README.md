@@ -32,60 +32,50 @@ The pipeline processes cursor-paginated source pages inside a single MySQL trans
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/pipeline/status` | Pipeline checkpoint status |
-| GET | `/api/pipeline/loaded-count` | Count of successfully loaded records |
-| GET | `/api/pipeline/rejected-count` | Count of rejected records |
-| GET | `/api/pipeline/rejected` | Paginated rejected record details |
-| GET | `/api/pipeline/loaded` | Paginated successfully loaded records |
+| GET | `/api/status` | Pipeline checkpoint status and record/error counts |
+| GET | `/api/records` | Paginated destination records |
+| GET | `/api/records/{sourceId}` | Single destination record by source ID |
+| GET | `/api/errors` | Paginated ingestion errors |
 
 ### Examples
 
 ```bash
-curl http://localhost:8000/api/pipeline/status
-curl http://localhost:8000/api/pipeline/loaded-count
-curl http://localhost:8000/api/pipeline/rejected-count
-curl "http://localhost:8000/api/pipeline/rejected?per_page=10"
-curl "http://localhost:8000/api/pipeline/loaded?per_page=10"
+curl http://localhost:8080/api/status
+curl "http://localhost:8080/api/records?per_page=10&status=active"
+curl "http://localhost:8080/api/errors?per_page=10"
+curl http://localhost:8080/api/records/customer-001
 ```
 
 ## Expected results after a full run
 
-After `docker compose up --build` completes, the pipeline should load **6** valid destination records and reject **4** malformed source records.
+After `docker compose up --build` completes, the pipeline loads **297** valid destination records and isolates **10** malformed source records (see [`source-api/DATASET.md`](source-api/DATASET.md)).
 
-| External ID | Final version | Notes |
-|-------------|---------------|-------|
-| rec-001 | 2 | Duplicate in page 1 ignored; v2 accepted; older v1 rejected |
-| rec-002 | 1 | |
-| rec-003 | 1 | |
-| rec-004 | 2 | |
-| rec-005 | 1 | |
-| rec-006 | 1 | |
-
-Rejected records:
-
-| Error | Source page |
-|-------|-------------|
-| missing_external_id | page-4 |
-| invalid_version | page-4 |
-| invalid_updated_at | page-5 |
-| invalid_name | page-5 |
+The deterministic test fixture used in automated tests loads **6** valid records and **4** malformed records.
 
 ## Running tests
 
-Tests that exercise MySQL-specific upsert logic require MySQL:
+The test suite uses MySQL for upsert logic, JSON fields, checkpoint transactions, and API feature tests. SQLite-only runs will skip those tests.
+
+Run the full suite in Docker:
 
 ```bash
-docker compose exec app sh -c "DB_CONNECTION=mysql DB_HOST=mysql DB_PORT=3306 DB_DATABASE=ingestion DB_USERNAME=ingestion DB_PASSWORD=secret php artisan test"
+docker compose run --rm test
 ```
 
-Unit tests for validation and HTTP retry behavior run without MySQL. Destination writer, pipeline, and API feature tests use MySQL.
+Run a subset:
+
+```bash
+docker compose run --rm test php artisan test --filter=IngestionPipeline
+```
+
+Unit tests for HTTP retry behavior and record validation run without MySQL when executed locally with SQLite defaults.
 
 ## Resuming after interruption
 
 The pipeline is safe to re-run:
 
 ```bash
-docker compose exec app php artisan ingestion:run
+docker compose run --rm etl php artisan etl:run
 ```
 
 If the process stops before a page transaction commits, the checkpoint remains at the last successful page and the interrupted page is reprocessed on the next run.

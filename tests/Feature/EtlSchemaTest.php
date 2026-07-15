@@ -6,19 +6,19 @@ use App\Models\DestinationRecord;
 use App\Models\IngestionError;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Schema;
+use Tests\Concerns\RequiresMySql;
 use Tests\TestCase;
 
 class EtlSchemaTest extends TestCase
 {
     use RefreshDatabase;
+    use RequiresMySql;
 
     protected function setUp(): void
     {
         parent::setUp();
 
-        if (config('database.default') !== 'mysql') {
-            $this->markTestSkipped('ETL schema tests require MySQL.');
-        }
+        $this->setUpRequiresMySql();
     }
 
     public function test_destination_record_json_round_trip(): void

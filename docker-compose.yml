@@ -78,5 +78,18 @@ services:
       source-api:
         condition: service_healthy
 
+  test:
+    build:
+      context: .
+    environment:
+      <<: *laravel-env
+      APP_ENV: testing
+      DB_DATABASE: etl_test
+    command: sh docker/test.sh
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: "no"
+
 volumes:
   mysql_data:

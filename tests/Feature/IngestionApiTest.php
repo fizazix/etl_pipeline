@@ -7,19 +7,19 @@ use App\Models\IngestionError;
 use App\Models\PipelineCheckpoint;
 use App\Services\Ingestion\IngestionPipeline;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Concerns\RequiresMySql;
 use Tests\TestCase;
 
 class IngestionApiTest extends TestCase
 {
     use RefreshDatabase;
+    use RequiresMySql;
 
     protected function setUp(): void
     {
         parent::setUp();
 
-        if (config('database.default') !== 'mysql') {
-            $this->markTestSkipped('Ingestion API feature tests require MySQL.');
-        }
+        $this->setUpRequiresMySql();
     }
 
     public function test_status_returns_empty_state_when_no_checkpoint_exists(): void

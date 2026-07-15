@@ -47,7 +47,7 @@ class SourceApiClientTest extends TestCase
         Http::assertSentCount(2);
     }
 
-    public function test_respects_retry_after_header_on_rate_limit(): void
+    public function test_http_429_is_retried_and_succeeds(): void
     {
         Http::fake([
             'source.test/*' => Http::sequence()
@@ -65,7 +65,7 @@ class SourceApiClientTest extends TestCase
         Http::assertSentCount(2);
     }
 
-    public function test_retries_connection_failures(): void
+    public function test_retries_connection_or_timeout_failures(): void
     {
         Http::fake([
             'source.test/*' => Http::response([

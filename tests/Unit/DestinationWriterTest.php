@@ -7,11 +7,13 @@ use App\Services\Ingestion\DestinationWriter;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Tests\Concerns\RequiresMySql;
 use Tests\TestCase;
 
 class DestinationWriterTest extends TestCase
 {
     use RefreshDatabase;
+    use RequiresMySql;
 
     private DestinationWriter $writer;
 
@@ -19,9 +21,7 @@ class DestinationWriterTest extends TestCase
     {
         parent::setUp();
 
-        if (config('database.default') !== 'mysql') {
-            $this->markTestSkipped('DestinationWriter tests require MySQL.');
-        }
+        $this->setUpRequiresMySql();
 
         $this->writer = new DestinationWriter;
     }

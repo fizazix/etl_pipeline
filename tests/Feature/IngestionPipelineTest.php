@@ -13,28 +13,26 @@ use App\Services\Ingestion\SourceApiClient;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
+use Tests\Concerns\RequiresMySql;
+use Tests\Support\DeterministicSourcePages;
 use Tests\TestCase;
 
 class IngestionPipelineTest extends TestCase
 {
+    use DeterministicSourcePages;
     use RefreshDatabase;
-
-    private const EXPECTED_VALID_RECORD_COUNT = 6;
-
-    private const EXPECTED_MALFORMED_RECORD_COUNT = 4;
+    use RequiresMySql;
 
     protected function setUp(): void
     {
         parent::setUp();
 
-        if (config('database.default') !== 'mysql') {
-            $this->markTestSkipped('Ingestion pipeline feature tests require MySQL.');
-        }
+        $this->setUpRequiresMySql();
     }
 
     public function test_complete_ingestion(): void
     {
-        $this->fakeSourcePages();
+        $this->fakeDeterministicSourcePages();
 
         app(IngestionPipeline::class)->run();
 
@@ -48,7 +46,7 @@ class IngestionPipelineTest extends TestCase
 
     public function test_checkpoint_creation(): void
     {
-        $this->fakeSourcePages();
+        $this->fakeDeterministicSourcePages();
 
         $this->assertDatabaseMissing('pipeline_checkpoints', [
             'pipeline_name' => IngestionPipeline::PIPELINE_NAME,
@@ -64,7 +62,7 @@ class IngestionPipelineTest extends TestCase
 
     public function test_checkpoint_advancement(): void
     {
-        $this->fakeSourcePages();
+        $this->fakeDeterministicSourcePages();
 
         app(IngestionPipeline::class)->run(maxPages: 1);
 
@@ -77,7 +75,7 @@ class IngestionPipelineTest extends TestCase
 
     public function test_checkpoint_completion(): void
     {
-        $this->fakeSourcePages();
+        $this->fakeDeterministicSourcePages();
 
         app(IngestionPipeline::class)->run();
 
@@ -88,9 +86,21 @@ class IngestionPipelineTest extends TestCase
         $this->assertNotNull($checkpoint->completed_at);
     }
 
+    public function test_successful_page_commits_destination_and_checkpoint_together(): void
+    {
+        $this->fakeDeterministicSourcePages();
+
+        app(IngestionPipeline::class)->run(maxPages: 1);
+
+        $this->assertSame(2, DestinationRecord::count());
+        $this->assertSame('3', $this->checkpoint()->next_cursor);
+        $this->assertTrue(DestinationRecord::where('source_id', 'customer-001')->exists());
+        $this->assertTrue(DestinationRecord::where('source_id', 'customer-002')->exists());
+    }
+
     public function test_resume_from_saved_cursor(): void
     {
-        $this->fakeSourcePages();
+        $this->fakeDeterministicSourcePages();
 
         PipelineCheckpoint::create([
             'pipeline_name' => IngestionPipeline::PIPELINE_NAME,
@@ -173,7 +183,7 @@ class IngestionPipelineTest extends TestCase
 
     public function test_page_exception_rolls_back_destination_rows(): void
     {
-        $this->fakeSourcePages();
+        $this->fakeDeterministicSourcePages();
 
         $destinationWriter = $this->createMock(DestinationWriter::class);
         $destinationWriter->expects($this->once())
@@ -238,7 +248,7 @@ class IngestionPipelineTest extends TestCase
 
     public function test_page_exception_does_not_advance_checkpoint(): void
     {
-        $this->fakeSourcePages();
+        $this->fakeDeterministicSourcePages();
 
         $destinationWriter = $this->createMock(DestinationWriter::class);
         $destinationWriter->expects($this->once())
@@ -257,6 +267,36 @@ class IngestionPipelineTest extends TestCase
             $this->assertSame(PipelineCheckpoint::STATUS_FAILED, $checkpoint->status);
             $this->assertNull($checkpoint->next_cursor);
             $this->assertNotNull($checkpoint->last_error);
+        }
+    }
+
+    public function test_failed_page_after_successful_pages_preserves_last_committed_cursor(): void
+    {
+        $this->fakeDeterministicSourcePages();
+
+        $pipeline = app(IngestionPipeline::class);
+        $pipeline->run(maxPages: 2);
+
+        $this->assertSame('5', $this->checkpoint()->next_cursor);
+        $this->assertSame(3, DestinationRecord::count());
+
+        $destinationWriter = $this->createMock(DestinationWriter::class);
+        $destinationWriter->expects($this->once())
+            ->method('upsert')
+            ->willThrowException(new RuntimeException('Destination write failed'));
+
+        $this->bindPipeline($destinationWriter);
+
+        $this->expectException(RuntimeException::class);
+
+        try {
+            app(IngestionPipeline::class)->run();
+        } finally {
+            $checkpoint = $this->checkpoint();
+
+            $this->assertSame(PipelineCheckpoint::STATUS_FAILED, $checkpoint->status);
+            $this->assertSame('5', $checkpoint->next_cursor);
+            $this->assertSame(3, DestinationRecord::count());
         }
     }
 
@@ -283,7 +323,7 @@ class IngestionPipelineTest extends TestCase
 
     public function test_rerunning_completed_pipeline_exits_safely(): void
     {
-        $this->fakeSourcePages();
+        $this->fakeDeterministicSourcePages();
 
         $pipeline = app(IngestionPipeline::class);
         $pipeline->run();
@@ -296,7 +336,7 @@ class IngestionPipelineTest extends TestCase
 
     public function test_forced_rerun_remains_idempotent(): void
     {
-        $this->fakeSourcePages();
+        $this->fakeDeterministicSourcePages();
 
         $pipeline = app(IngestionPipeline::class);
         $pipeline->run();
@@ -310,7 +350,7 @@ class IngestionPipelineTest extends TestCase
 
     public function test_stop_after_two_pages_and_resume(): void
     {
-        $this->fakeSourcePages();
+        $this->fakeDeterministicSourcePages();
 
         $pipeline = app(IngestionPipeline::class);
         $pipeline->run(maxPages: 2);
@@ -326,26 +366,31 @@ class IngestionPipelineTest extends TestCase
         $this->assertSame(PipelineCheckpoint::STATUS_COMPLETED, $this->checkpoint()->status);
     }
 
-    public function test_final_destination_count_matches_expected_unique_valid_records(): void
+    public function test_end_to_end_pipeline_produces_expected_outcomes(): void
     {
-        $this->fakeSourcePages();
+        $this->fakeDeterministicSourcePages();
 
         app(IngestionPipeline::class)->run();
+
+        $checkpoint = $this->checkpoint();
 
         $this->assertSame(self::EXPECTED_VALID_RECORD_COUNT, DestinationRecord::count());
+        $this->assertSame(self::EXPECTED_MALFORMED_RECORD_COUNT, IngestionError::count());
+        $this->assertSame(PipelineCheckpoint::STATUS_COMPLETED, $checkpoint->status);
+        $this->assertNull($checkpoint->next_cursor);
 
-        $alice = DestinationRecord::where('source_id', 'customer-001')->first();
+        $alice = DestinationRecord::where('source_id', 'customer-001')->firstOrFail();
         $this->assertSame(2, $alice->version);
         $this->assertSame('alice.updated@example.com', $alice->email);
-    }
 
-    public function test_final_error_count_matches_expected_unique_malformed_records(): void
-    {
-        $this->fakeSourcePages();
+        $customerFour = DestinationRecord::where('source_id', 'customer-004')->firstOrFail();
+        $this->assertSame(2, $customerFour->version);
 
-        app(IngestionPipeline::class)->run();
+        $customerThree = DestinationRecord::where('source_id', 'customer-003')->firstOrFail();
+        $this->assertSame(2, $customerThree->version);
+        $this->assertSame('2024-03-01 10:00:00', $customerThree->source_updated_at->format('Y-m-d H:i:s'));
+        $this->assertSame('customer-003.later@example.com', $customerThree->email);
 
-        $this->assertSame(self::EXPECTED_MALFORMED_RECORD_COUNT, IngestionError::count());
         $this->assertSame(1, IngestionError::whereNull('source_id')->count());
         $this->assertSame('validation_error', IngestionError::first()->error_type);
     }
@@ -363,157 +408,5 @@ class IngestionPipelineTest extends TestCase
             $destinationWriter,
             app(IngestionErrorWriter::class),
         ));
-    }
-
-    private function fakeSourcePages(): void
-    {
-        config(['ingestion.source_api_url' => 'http://source.test/records']);
-
-        $pages = [
-            '0' => [
-                'data' => [
-                    [
-                        'id' => 'customer-001',
-                        'name' => 'Customer 1',
-                        'email' => 'alice@example.com',
-                        'status' => 'active',
-                        'version' => 1,
-                        'updated_at' => '2024-01-01T10:00:00Z',
-                    ],
-                    [
-                        'id' => 'customer-002',
-                        'name' => 'Customer 2',
-                        'email' => 'customer-002@example.com',
-                        'status' => 'active',
-                        'version' => 1,
-                        'updated_at' => '2024-01-02T10:00:00Z',
-                    ],
-                    [
-                        'id' => 'customer-001',
-                        'name' => 'Customer 1',
-                        'email' => 'alice@example.com',
-                        'status' => 'active',
-                        'version' => 1,
-                        'updated_at' => '2024-01-01T10:00:00Z',
-                    ],
-                ],
-                'next_cursor' => '3',
-                'has_more' => true,
-            ],
-            '3' => [
-                'data' => [
-                    [
-                        'id' => 'customer-003',
-                        'name' => 'Customer 3',
-                        'email' => 'customer-003@example.com',
-                        'status' => 'inactive',
-                        'version' => 1,
-                        'updated_at' => '2024-01-03T10:00:00Z',
-                    ],
-                    [
-                        'id' => 'customer-001',
-                        'name' => 'Customer 1',
-                        'email' => 'alice.updated@example.com',
-                        'status' => 'pending',
-                        'version' => 2,
-                        'updated_at' => '2024-02-01T10:00:00Z',
-                    ],
-                ],
-                'next_cursor' => '5',
-                'has_more' => true,
-            ],
-            '5' => [
-                'data' => [
-                    [
-                        'id' => 'customer-004',
-                        'name' => 'Customer 4',
-                        'email' => 'customer-004@example.com',
-                        'status' => 'pending',
-                        'version' => 2,
-                        'updated_at' => '2024-02-10T10:00:00Z',
-                    ],
-                    [
-                        'id' => 'customer-001',
-                        'name' => 'Customer 1 Old',
-                        'email' => 'alice.old@example.com',
-                        'status' => 'active',
-                        'version' => 1,
-                        'updated_at' => '2024-01-01T10:00:00Z',
-                    ],
-                ],
-                'next_cursor' => '7',
-                'has_more' => true,
-            ],
-            '7' => [
-                'data' => [
-                    [
-                        'id' => 'customer-005',
-                        'name' => 'Customer 5',
-                        'email' => 'customer-005@example.com',
-                        'status' => 'active',
-                        'version' => 1,
-                        'updated_at' => '2024-03-01T10:00:00Z',
-                    ],
-                    [
-                        'name' => 'Missing ID',
-                        'email' => 'missing@example.com',
-                        'status' => 'active',
-                        'version' => 1,
-                        'updated_at' => '2024-03-02T10:00:00Z',
-                    ],
-                    [
-                        'id' => 'customer-bad-version',
-                        'name' => 'Bad Version',
-                        'email' => 'badversion@example.com',
-                        'status' => 'active',
-                        'version' => 'two',
-                        'updated_at' => '2024-03-03T10:00:00Z',
-                    ],
-                ],
-                'next_cursor' => '10',
-                'has_more' => true,
-            ],
-            '10' => [
-                'data' => [
-                    [
-                        'id' => 'customer-006',
-                        'name' => 'Customer 6',
-                        'email' => 'customer-006@example.com',
-                        'status' => 'active',
-                        'version' => 1,
-                        'updated_at' => '2024-04-01T10:00:00Z',
-                    ],
-                    [
-                        'id' => 'customer-bad-date',
-                        'name' => 'Bad Date',
-                        'email' => 'baddate@example.com',
-                        'status' => 'active',
-                        'version' => 1,
-                        'updated_at' => 'not-a-date',
-                    ],
-                    [
-                        'id' => 'customer-bad-name',
-                        'name' => 12345,
-                        'email' => 'badname@example.com',
-                        'status' => 'active',
-                        'version' => 1,
-                        'updated_at' => '2024-04-02T10:00:00Z',
-                    ],
-                ],
-                'next_cursor' => null,
-                'has_more' => false,
-            ],
-        ];
-
-        Http::fake(function ($request) use ($pages) {
-            parse_str(parse_url($request->url(), PHP_URL_QUERY) ?? '', $query);
-            $cursor = $query['cursor'] ?? '0';
-
-            if (! array_key_exists($cursor, $pages)) {
-                return Http::response(['error' => 'unknown cursor'], 404);
-            }
-
-            return Http::response($pages[$cursor], 200);
-        });
     }
 }

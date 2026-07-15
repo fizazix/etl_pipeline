@@ -7,11 +7,13 @@ use App\Services\Ingestion\IngestionErrorWriter;
 use App\Services\Ingestion\RecordValidator;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Tests\Concerns\RequiresMySql;
 use Tests\TestCase;
 
 class IngestionErrorWriterTest extends TestCase
 {
     use RefreshDatabase;
+    use RequiresMySql;
 
     private RecordValidator $validator;
 
@@ -21,9 +23,7 @@ class IngestionErrorWriterTest extends TestCase
     {
         parent::setUp();
 
-        if (config('database.default') !== 'mysql') {
-            $this->markTestSkipped('Ingestion error writer tests require MySQL.');
-        }
+        $this->setUpRequiresMySql();
 
         $this->validator = new RecordValidator;
         $this->errorWriter = new IngestionErrorWriter;
@@ -95,6 +95,33 @@ class IngestionErrorWriterTest extends TestCase
 
         $this->assertTrue($firstSeenAt->equalTo($error->first_seen_at));
         $this->assertTrue($error->last_seen_at->greaterThan($firstSeenAt));
+    }
+
+    public function test_malformed_payload_is_persisted(): void
+    {
+        $invalidResult = $this->validator->validate([
+            'name' => 'Missing ID',
+            'email' => 'missing@example.com',
+            'status' => 'active',
+            'version' => 1,
+            'updated_at' => '2024-06-01T10:00:00Z',
+        ]);
+
+        DB::transaction(function () use ($invalidResult): void {
+            $this->errorWriter->upsertValidationError($invalidResult, 'page-4');
+        });
+
+        $error = IngestionError::firstOrFail();
+
+        $this->assertSame([
+            'name' => 'Missing ID',
+            'email' => 'missing@example.com',
+            'status' => 'active',
+            'version' => 1,
+            'updated_at' => '2024-06-01T10:00:00Z',
+        ], $error->raw_payload);
+        $this->assertSame('validation_error', $error->error_type);
+        $this->assertArrayHasKey('messages', $error->error_details);
     }
 
     public function test_different_malformed_payloads_create_different_fingerprints(): void
