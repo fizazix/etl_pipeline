@@ -1,62 +1,95 @@
-# Resumable ETL Ingestion Pipeline
+# Resumable ETL Data Ingestion Pipeline
 
-A Laravel-based ETL pipeline that ingests records from a simulated HTTP source API into MySQL with resumable checkpointing, version-aware upserts, and rejection reporting.
+A Laravel ETL worker that consumes cursor-paginated JSON from a simulated HTTP source API, validates each record, and loads accepted rows into MySQL. Malformed records are isolated in a separate error table. The pipeline supports at-least-once delivery with idempotent destination writes and resumable checkpoints. HTTP endpoints expose pipeline status, destination records, and ingestion errors.
 
-## Quick start
+## Architecture
+
+Four components work together:
+
+- **Simulated source API** (`source-api`) — deterministic cursor-paginated HTTP dataset with retries and rate limits
+- **Laravel ETL worker** (`etl`) — fetches pages, validates records, upserts into MySQL, updates checkpoints
+- **MySQL destination** (`mysql`) — stores destination records, ingestion errors, and pipeline checkpoints
+- **Laravel inspection API** (`app`) — read-only HTTP endpoints on port 8080
+
+```text
+source-api  --HTTP-->  etl (Laravel worker)  -->  MySQL (etl schema)
+                              |
+                              v
+                         app (Laravel API :8080)
+```
+
+Docker Compose services: `mysql`, `migrate` (one-shot migrations), `source-api`, `app`, `etl`.
+
+## Requirements
+
+- Docker
+- Docker Compose
+
+## Start the project
 
 ```bash
 docker compose up --build
 ```
 
-Docker Compose starts MySQL, the simulated source API, and the Laravel app. On first boot the app automatically:
+This automatically:
 
-1. Installs Composer dependencies
-2. Generates an application key
-3. Runs database migrations
-4. Executes the ingestion pipeline (`php artisan ingestion:run`)
-5. Starts the HTTP server on port 8000
+1. Starts MySQL and waits until it is healthy
+2. Runs database migrations via the `migrate` service
+3. Starts the simulated source API
+4. Starts the Laravel inspection API at http://localhost:8080
+5. Runs the ETL worker (`php artisan etl:run`)
 
-No manual migration, seeding, key generation, or ETL command is required.
+The ETL worker may finish before you run the curl examples below. Query `/api/status` to confirm completion (`pipeline.status` is `completed`).
 
-## Architecture
-
-```text
-source-api (PHP)  --HTTP-->  Laravel ingestion:run  -->  MySQL
-                                    |
-                                    +--> HTTP API (status, counts, records)
-```
-
-The pipeline processes cursor-paginated source pages inside a single MySQL transaction per page. Destination writes, rejection writes, and checkpoint updates commit together. A crash before commit rolls back the entire page so the pipeline can safely resume.
-
-## HTTP endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/status` | Pipeline checkpoint status and record/error counts |
-| GET | `/api/records` | Paginated destination records |
-| GET | `/api/records/{sourceId}` | Single destination record by source ID |
-| GET | `/api/errors` | Paginated ingestion errors |
-
-### Examples
+## Query status
 
 ```bash
 curl http://localhost:8080/api/status
-curl "http://localhost:8080/api/records?per_page=10&status=active"
-curl "http://localhost:8080/api/errors?per_page=10"
-curl http://localhost:8080/api/records/customer-001
 ```
 
-## Expected results after a full run
+Useful fields: `records_loaded`, `isolated_errors`, `pipeline.status`, `pipeline.next_cursor`.
 
-After `docker compose up --build` completes, the pipeline loads **297** valid destination records and isolates **10** malformed source records (see [`source-api/DATASET.md`](source-api/DATASET.md)).
+## Query records
 
-The deterministic test fixture used in automated tests loads **6** valid records and **4** malformed records.
+```bash
+curl http://localhost:8080/api/records
+```
 
-## Running tests
+Filter by source ID:
 
-The test suite uses MySQL for upsert logic, JSON fields, checkpoint transactions, and API feature tests. SQLite-only runs will skip those tests.
+```bash
+curl "http://localhost:8080/api/records?source_id=customer-002"
+```
 
-Run the full suite in Docker:
+## Query errors
+
+```bash
+curl http://localhost:8080/api/errors
+```
+
+## Demonstrate idempotency
+
+After a completed run, force a full re-ingestion:
+
+```bash
+docker compose run --rm etl php artisan etl:run --force
+```
+
+The pipeline reprocesses from cursor `0`, but destination upserts and error fingerprinting are idempotent. `records_loaded` and `isolated_errors` should remain stable.
+
+## Demonstrate resume behavior
+
+Use `--max-pages` to stop after a fixed number of committed pages:
+
+```bash
+docker compose run --rm etl php artisan etl:run --force --max-pages=2
+curl http://localhost:8080/api/status
+docker compose run --rm etl php artisan etl:run
+```
+
+The first command stops after two pages. The checkpoint keeps a saved `next_cursor` (typically `100` against the bundled source with page size 50) and `pipeline.status` is `running`. The second command resumes from that cursor without reprocessing already-committed pages. After it finishes, counts match a full run.
+
+## Run tests
 
 ```bash
 docker compose run --rm test
@@ -68,40 +101,52 @@ Run a subset:
 docker compose run --rm test php artisan test --filter=IngestionPipeline
 ```
 
-Unit tests for HTTP retry behavior and record validation run without MySQL when executed locally with SQLite defaults.
+Local runs with SQLite skip MySQL-dependent tests. Use the Docker command above for the full suite.
 
-## Resuming after interruption
-
-The pipeline is safe to re-run:
+## Reset the project
 
 ```bash
-docker compose run --rm etl php artisan etl:run
+docker compose down -v
+docker compose up --build
 ```
 
-If the process stops before a page transaction commits, the checkpoint remains at the last successful page and the interrupted page is reprocessed on the next run.
+The `-v` flag removes the `mysql_data` volume and deletes all MySQL data.
 
-## Configuration
+## Important implementation details
 
-Key environment variables (see `.env.example`):
-
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `SOURCE_API_URL` | `http://source-api:8080/records` | Simulated source endpoint |
-| `INGESTION_PIPELINE_NAME` | `default` | Checkpoint identifier |
-| `INGESTION_MAX_RETRIES` | `5` | HTTP retry limit |
-| `INGESTION_BACKOFF_BASE_MS` | `100` | Exponential backoff base delay |
-| `INGESTION_BACKOFF_MAX_MS` | `2000` | Maximum backoff delay |
-
-## Project layout
-
-```text
-app/Services/Ingestion/     Pipeline services
-app/Console/Commands/       ingestion:run command
-app/Http/Controllers/       Status and listing endpoints
-source-api/                 Deterministic simulated HTTP source
-docker/entrypoint.sh        Automated startup script
-```
+- **Version-aware upsert** — MySQL `INSERT ... ON DUPLICATE KEY UPDATE` with a shared `@accept` flag. A row wins when incoming `version` is higher, or when versions tie and `source_updated_at` is later.
+- **Page-level transaction** — each source page is processed inside one `DB::transaction`.
+- **Checkpoint in same transaction** — destination writes, error writes, and checkpoint advancement commit together per page.
+- **Malformed record isolation** — invalid payloads are persisted to `ingestion_errors` with fingerprint-based deduplication.
+- **Exponential retry** — transient HTTP failures retry with `2^(attempt-1)` second delays.
+- **429 Retry-After** — rate-limit responses honor the `Retry-After` header when present.
+- **Sequential request pacing** — enforces a minimum interval between requests (default 4 req/s via `SOURCE_API_REQUESTS_PER_SECOND`).
 
 See [DECISIONS.md](DECISIONS.md) for design rationale.
 
-MySQL is exposed on host port **3307** (not 3306) to avoid conflicts with local MySQL installations.
+## Project structure
+
+```text
+app/
+  Console/Commands/       etl:run command
+  Http/Controllers/       inspection API
+  Models/                 destination, errors, checkpoint
+  Services/Ingestion/     pipeline, client, writers, validator
+database/migrations/
+source-api/               simulated HTTP source + DATASET.md
+tests/                    unit + feature suite
+docker/                   test runner scripts
+docker-compose.yml
+```
+
+## Expected result
+
+**Automated test fixture** (verified by `test_end_to_end_pipeline_produces_expected_outcomes`):
+
+- 6 unique destination records
+- 4 unique isolated ingestion errors
+
+**Full docker stack** (after `docker compose up` against the bundled source-api; see [source-api/DATASET.md](source-api/DATASET.md)):
+
+- 297 unique destination records
+- 10 unique isolated ingestion errors
