@@ -2,19 +2,20 @@
 
 namespace App\Console\Commands;
 
+use App\Console\Commands\Concerns\InteractsWithIngestionPipeline;
+use App\Services\Ingestion\IngestionPipeline;
 use Illuminate\Console\Command;
 
 class RunEtlCommand extends Command
 {
-    protected $signature = 'etl:run';
+    use InteractsWithIngestionPipeline;
 
-    protected $description = 'Run the ETL pipeline';
+    protected $signature = 'etl:run {--force : Reprocess from cursor 0} {--max-pages= : Stop after N pages}';
 
-    public function handle(): int
+    protected $description = 'Run the resumable ETL ingestion pipeline';
+
+    public function handle(IngestionPipeline $pipeline): int
     {
-        $this->info('ETL pipeline is not yet implemented.');
-        $this->line('Source API URL: '.config('etl.source_api_url'));
-
-        return self::SUCCESS;
+        return $this->runIngestionPipeline($pipeline);
     }
 }

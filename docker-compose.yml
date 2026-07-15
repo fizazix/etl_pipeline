@@ -10,7 +10,7 @@ x-laravel-env: &laravel-env
   DB_DATABASE: etl
   DB_USERNAME: etl
   DB_PASSWORD: secret
-  SOURCE_API_URL: http://source-api:8081
+  SOURCE_API_URL: http://source-api:8081/records
   SOURCE_API_TIMEOUT: 5
   SOURCE_API_PAGE_SIZE: 50
   SOURCE_API_REQUESTS_PER_SECOND: 4

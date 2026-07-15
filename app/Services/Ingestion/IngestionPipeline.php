@@ -18,7 +18,7 @@ class IngestionPipeline
         private IngestionErrorWriter $errorWriter,
     ) {}
 
-    public function run(?int $maxPages = null, bool $force = false): void
+    public function run(?int $maxPages = null, bool $force = false, ?callable $onPageProcessed = null): void
     {
         $checkpoint = $this->resolveCheckpoint();
 
@@ -81,6 +81,8 @@ class IngestionPipeline
             }
 
             $pagesProcessed++;
+
+            $onPageProcessed?->__invoke($pageCursor, $page, $pagesProcessed);
 
             if ($maxPages !== null && $pagesProcessed >= $maxPages) {
                 break;
