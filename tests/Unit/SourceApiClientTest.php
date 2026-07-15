@@ -5,6 +5,7 @@ namespace Tests\Unit;
 use App\Services\Ingestion\InvalidSourceApiEnvelopeException;
 use App\Services\Ingestion\SourceApiClient;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
@@ -75,10 +76,11 @@ class SourceApiClientTest extends TestCase
             ], 200),
         ]);
 
-        $client = new class(fn (int $us) => null) extends SourceApiClient {
+        $client = new class(fn (int $us) => null) extends SourceApiClient
+        {
             private int $calls = 0;
 
-            protected function performGet(string $url, array $query, int $timeout): \Illuminate\Http\Client\Response
+            protected function performGet(string $url, array $query, int $timeout): Response
             {
                 $this->calls++;
 

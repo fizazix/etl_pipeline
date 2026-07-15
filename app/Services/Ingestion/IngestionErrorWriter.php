@@ -18,11 +18,11 @@ class IngestionErrorWriter
             'INSERT INTO ingestion_errors (
                 source_id, source_cursor, error_type, error_details, raw_payload,
                 fingerprint, occurrence_count, first_seen_at, last_seen_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?) AS new
             ON DUPLICATE KEY UPDATE
                 occurrence_count = ingestion_errors.occurrence_count + 1,
-                last_seen_at = VALUES(last_seen_at),
-                updated_at = VALUES(updated_at)',
+                last_seen_at = new.last_seen_at,
+                updated_at = new.updated_at',
             [
                 $invalidResult['source_id'],
                 $sourceCursor,

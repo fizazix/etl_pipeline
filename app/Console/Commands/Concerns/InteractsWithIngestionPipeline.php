@@ -6,7 +6,6 @@ use App\Models\DestinationRecord;
 use App\Models\IngestionError;
 use App\Models\PipelineCheckpoint;
 use App\Services\Ingestion\IngestionPipeline;
-use Illuminate\Support\Facades\Log;
 use Throwable;
 
 trait InteractsWithIngestionPipeline
@@ -20,8 +19,10 @@ trait InteractsWithIngestionPipeline
             return self::FAILURE;
         }
 
+        $pipelineName = config('ingestion.pipeline_name');
+
         $checkpoint = PipelineCheckpoint::query()
-            ->where('pipeline_name', IngestionPipeline::PIPELINE_NAME)
+            ->where('pipeline_name', $pipelineName)
             ->first();
 
         if ($checkpoint?->status === PipelineCheckpoint::STATUS_COMPLETED && ! $force) {
@@ -54,12 +55,6 @@ trait InteractsWithIngestionPipeline
                 },
             );
         } catch (Throwable $exception) {
-            Log::error('Ingestion pipeline command failed.', [
-                'pipeline' => IngestionPipeline::PIPELINE_NAME,
-                'exception' => $exception::class,
-                'message' => $exception->getMessage(),
-            ]);
-
             $this->error('Pipeline failed: '.$exception->getMessage());
 
             return self::FAILURE;
@@ -80,29 +75,13 @@ trait InteractsWithIngestionPipeline
             return null;
         }
 
-        if ($maxPages === true) {
+        if ($maxPages === true || ! is_scalar($maxPages)) {
             $this->error('The --max-pages option must be a positive integer.');
 
             return false;
         }
 
-        if (is_int($maxPages)) {
-            if ($maxPages < 1) {
-                $this->error('The --max-pages option must be a positive integer.');
-
-                return false;
-            }
-
-            return $maxPages;
-        }
-
-        if (! is_scalar($maxPages)) {
-            $this->error('The --max-pages option must be a positive integer.');
-
-            return false;
-        }
-
-        $maxPagesString = trim((string) $maxPages);
+        $maxPagesString = is_int($maxPages) ? (string) $maxPages : trim((string) $maxPages);
 
         if ($maxPagesString === '' || ! ctype_digit($maxPagesString)) {
             $this->error('The --max-pages option must be a positive integer.');
@@ -124,7 +103,7 @@ trait InteractsWithIngestionPipeline
     private function renderPipelineSummary(): int
     {
         $checkpoint = PipelineCheckpoint::query()
-            ->where('pipeline_name', IngestionPipeline::PIPELINE_NAME)
+            ->where('pipeline_name', config('ingestion.pipeline_name'))
             ->first();
 
         $status = $checkpoint?->status ?? PipelineCheckpoint::STATUS_PENDING;

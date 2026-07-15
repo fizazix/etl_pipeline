@@ -51,7 +51,7 @@ class IngestionPipeline
                 $page = $this->sourceApiClient->fetchPage($cursor, (int) config('ingestion.page_size'));
             } catch (Throwable $exception) {
                 Log::error('Ingestion pipeline failed to fetch source page.', [
-                    'pipeline' => self::PIPELINE_NAME,
+                    'pipeline' => $this->pipelineName(),
                     'cursor' => $cursor,
                     'exception' => $exception::class,
                     'message' => $exception->getMessage(),
@@ -99,7 +99,7 @@ class IngestionPipeline
     private function resolveCheckpoint(): PipelineCheckpoint
     {
         return PipelineCheckpoint::firstOrCreate(
-            ['pipeline_name' => self::PIPELINE_NAME],
+            ['pipeline_name' => $this->pipelineName()],
             [
                 'next_cursor' => null,
                 'status' => PipelineCheckpoint::STATUS_PENDING,
@@ -150,5 +150,10 @@ class IngestionPipeline
         }
 
         $this->destinationWriter->upsert($result['normalized']);
+    }
+
+    private function pipelineName(): string
+    {
+        return (string) config('ingestion.pipeline_name');
     }
 }

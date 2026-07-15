@@ -4,6 +4,7 @@ namespace Tests\Unit;
 
 use App\Models\DestinationRecord;
 use App\Services\Ingestion\DestinationWriter;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -240,7 +241,7 @@ class DestinationWriterTest extends TestCase
             'raw_payload' => ['id' => 'customer-001'],
         ]);
 
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
 
         DestinationRecord::create([
             'source_id' => 'customer-001',

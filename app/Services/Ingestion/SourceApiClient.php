@@ -149,42 +149,24 @@ class SourceApiClient
         $body = $response->json();
 
         if (! is_array($body)) {
-            Log::warning('Source API returned an invalid response envelope.', [
-                'status' => $response->status(),
-                'reason' => 'response is not valid JSON object',
-            ]);
-
-            throw new InvalidSourceApiEnvelopeException('Source API response is not valid JSON.');
+            $this->rejectInvalidEnvelope($response, 'response is not valid JSON object', 'Source API response is not valid JSON.');
         }
 
         if (! array_key_exists('data', $body) || ! is_array($body['data'])) {
-            Log::warning('Source API returned an invalid response envelope.', [
-                'status' => $response->status(),
-                'reason' => 'data is missing or not an array',
-            ]);
-
-            throw new InvalidSourceApiEnvelopeException('Source API response is missing a valid data array.');
+            $this->rejectInvalidEnvelope($response, 'data is missing or not an array', 'Source API response is missing a valid data array.');
         }
 
         if (! array_key_exists('has_more', $body) || ! is_bool($body['has_more'])) {
-            Log::warning('Source API returned an invalid response envelope.', [
-                'status' => $response->status(),
-                'reason' => 'has_more is missing or not boolean',
-            ]);
-
-            throw new InvalidSourceApiEnvelopeException('Source API response is missing a valid has_more flag.');
+            $this->rejectInvalidEnvelope($response, 'has_more is missing or not boolean', 'Source API response is missing a valid has_more flag.');
         }
 
         $hasMore = $body['has_more'];
         $nextCursor = array_key_exists('next_cursor', $body) ? $body['next_cursor'] : null;
 
         if ($hasMore && $nextCursor === null) {
-            Log::warning('Source API returned an invalid response envelope.', [
-                'status' => $response->status(),
-                'reason' => 'has_more is true but next_cursor is missing',
-            ]);
-
-            throw new InvalidSourceApiEnvelopeException(
+            $this->rejectInvalidEnvelope(
+                $response,
+                'has_more is true but next_cursor is missing',
                 'Source API response indicates more pages but is missing next_cursor.'
             );
         }
@@ -194,6 +176,16 @@ class SourceApiClient
             'next_cursor' => $nextCursor === null ? null : (string) $nextCursor,
             'has_more' => $hasMore,
         ];
+    }
+
+    private function rejectInvalidEnvelope(Response $response, string $reason, string $message): never
+    {
+        Log::warning('Source API returned an invalid response envelope.', [
+            'status' => $response->status(),
+            'reason' => $reason,
+        ]);
+
+        throw new InvalidSourceApiEnvelopeException($message);
     }
 
     private function paceBeforeRequest(): void
