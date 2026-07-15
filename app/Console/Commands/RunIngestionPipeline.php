@@ -7,7 +7,7 @@ use Illuminate\Console\Command;
 
 class RunIngestionPipeline extends Command
 {
-    protected $signature = 'ingestion:run';
+    protected $signature = 'ingestion:run {--force : Reprocess from cursor 0} {--restart : Alias for --force}';
 
     protected $description = 'Run the resumable ETL ingestion pipeline';
 
@@ -16,7 +16,7 @@ class RunIngestionPipeline extends Command
         $this->info('Starting ingestion pipeline...');
 
         try {
-            $pipeline->run();
+            $pipeline->run(force: $this->option('force') || $this->option('restart'));
         } catch (\Throwable $exception) {
             $this->error('Ingestion pipeline failed: '.$exception->getMessage());
 
