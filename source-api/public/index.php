@@ -2,83 +2,148 @@
 
 declare(strict_types=1);
 
+const RATE_LIMIT_PER_SECOND = 5;
+const STATE_DIR = '/source-api-state';
+
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
-if ($path === '/health') {
-    header('Content-Type: application/json');
-    echo json_encode(['status' => 'ok']);
-    exit;
+
+match ($path) {
+    '/health' => handleHealth(),
+    '/records' => handleRecords(),
+    default => respondJson(404, ['error' => 'Not found']),
+};
+
+function handleHealth(): void
+{
+    respondJson(200, ['status' => 'ok']);
 }
 
-$records = require dirname(__DIR__).'/data/records.php';
+function handleRecords(): void
+{
+    $cursor = $_GET['cursor'] ?? '0';
+    $limit = $_GET['limit'] ?? '50';
 
-$cursor = $_GET['cursor'] ?? null;
-if ($cursor === '') {
-    $cursor = null;
+    $validationError = validatePagination($cursor, $limit);
+    if ($validationError !== null) {
+        respondJson(422, ['error' => $validationError]);
+
+        return;
+    }
+
+    $stateDir = stateDirectory();
+
+    if (! checkRateLimit($stateDir)) {
+        respondJson(429, ['error' => 'Rate limit exceeded'], ['Retry-After' => '1']);
+
+        return;
+    }
+
+    $transientFailure = checkTransientFailure($stateDir, $cursor);
+    if ($transientFailure !== null) {
+        respondJson(
+            $transientFailure['status'],
+            $transientFailure['body'],
+            $transientFailure['headers'] ?? []
+        );
+
+        return;
+    }
+
+    $dataset = require dirname(__DIR__).'/data/records.php';
+    $offset = (int) $cursor;
+    $pageSize = (int) $limit;
+    $data = array_slice($dataset, $offset, $pageSize);
+    $nextOffset = $offset + $pageSize;
+    $hasMore = $nextOffset < count($dataset);
+
+    respondJson(200, [
+        'data' => $data,
+        'next_cursor' => $hasMore ? (string) $nextOffset : null,
+        'has_more' => $hasMore,
+    ]);
 }
 
-$stateDir = sys_get_temp_dir().'/source-api-state';
-if (! is_dir($stateDir)) {
-    mkdir($stateDir, 0777, true);
+function validatePagination(string $cursor, string $limit): ?string
+{
+    if (! ctype_digit($cursor)) {
+        return 'cursor must be a non-negative integer';
+    }
+
+    if (! ctype_digit($limit) || (int) $limit < 1) {
+        return 'limit must be an integer between 1 and 100';
+    }
+
+    if ((int) $limit > 100) {
+        return 'limit must be an integer between 1 and 100';
+    }
+
+    return null;
 }
 
-function readAttempt(string $stateDir, string $key): int
+function stateDirectory(): string
+{
+    $stateDir = sys_get_temp_dir().STATE_DIR;
+
+    if (! is_dir($stateDir)) {
+        mkdir($stateDir, 0777, true);
+    }
+
+    return $stateDir;
+}
+
+function checkRateLimit(string $stateDir): bool
+{
+    $bucket = (string) time();
+    $file = $stateDir.'/rate-'.$bucket.'.txt';
+    $count = file_exists($file) ? (int) file_get_contents($file) : 0;
+
+    if ($count >= RATE_LIMIT_PER_SECOND) {
+        return false;
+    }
+
+    file_put_contents($file, (string) ($count + 1));
+
+    return true;
+}
+
+function checkTransientFailure(string $stateDir, string $cursor): ?array
+{
+    $failures = [
+        '100' => ['status' => 500, 'body' => ['error' => 'Transient server failure']],
+        '200' => ['status' => 429, 'body' => ['error' => 'Transient rate limit failure'], 'headers' => ['Retry-After' => '1']],
+    ];
+
+    if (! array_key_exists($cursor, $failures)) {
+        return null;
+    }
+
+    $attempt = incrementAttempt($stateDir, 'cursor-'.$cursor);
+
+    if ($attempt === 1) {
+        return $failures[$cursor];
+    }
+
+    return null;
+}
+
+function incrementAttempt(string $stateDir, string $key): int
 {
     $file = $stateDir.'/'.$key.'.txt';
+    $attempt = (file_exists($file) ? (int) file_get_contents($file) : 0) + 1;
+    file_put_contents($file, (string) $attempt);
 
-    if (! file_exists($file)) {
-        return 0;
-    }
-
-    return (int) file_get_contents($file);
+    return $attempt;
 }
 
-function writeAttempt(string $stateDir, string $key, int $attempt): void
+function respondJson(int $status, array $body, array $headers = []): void
 {
-    file_put_contents($stateDir.'/'.$key.'.txt', (string) $attempt);
-}
+    http_response_code($status);
+    header('Content-Type: application/json');
 
-header('Content-Type: application/json');
-
-if ($cursor === null) {
-    $cursor = 'page-1';
-}
-
-if ($cursor === 'fail-500') {
-    $attempt = readAttempt($stateDir, 'fail-500') + 1;
-    writeAttempt($stateDir, 'fail-500', $attempt);
-
-    if ($attempt < 3) {
-        http_response_code(500);
-        echo json_encode(['error' => 'Transient server failure', 'attempt' => $attempt]);
-        exit;
+    foreach ($headers as $name => $value) {
+        header($name.': '.$value);
     }
 
-    $cursor = 'page-3';
-}
-
-if ($cursor === 'fail-429') {
-    $attempt = readAttempt($stateDir, 'fail-429') + 1;
-    writeAttempt($stateDir, 'fail-429', $attempt);
-
-    if ($attempt < 2) {
-        http_response_code(429);
-        header('Retry-After: 1');
-        echo json_encode(['error' => 'Rate limit exceeded', 'attempt' => $attempt]);
-        exit;
-    }
-
-    $cursor = 'page-4';
-}
-
-if (! array_key_exists($cursor, $records)) {
-    http_response_code(404);
-    echo json_encode(['error' => 'Unknown cursor: '.$cursor]);
+    echo json_encode($body);
     exit;
 }
-
-$page = $records[$cursor];
-
-echo json_encode([
-    'data' => $page['data'],
-    'next_cursor' => $page['next_cursor'],
-]);
