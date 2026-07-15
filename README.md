@@ -1,58 +1,117 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Resumable ETL Ingestion Pipeline
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+A Laravel-based ETL pipeline that ingests records from a simulated HTTP source API into MySQL with resumable checkpointing, version-aware upserts, and rejection reporting.
 
-## About Laravel
-
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
-
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
-
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
-
-## Learning Laravel
-
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
-
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
-
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
-
-## Agentic Development
-
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
+## Quick start
 
 ```bash
-composer require laravel/boost --dev
-
-php artisan boost:install
+docker compose up --build
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+Docker Compose starts MySQL, the simulated source API, and the Laravel app. On first boot the app automatically:
 
-## Contributing
+1. Installs Composer dependencies
+2. Generates an application key
+3. Runs database migrations
+4. Executes the ingestion pipeline (`php artisan ingestion:run`)
+5. Starts the HTTP server on port 8000
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+No manual migration, seeding, key generation, or ETL command is required.
 
-## Code of Conduct
+## Architecture
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+```text
+source-api (PHP)  --HTTP-->  Laravel ingestion:run  -->  MySQL
+                                    |
+                                    +--> HTTP API (status, counts, records)
+```
 
-## Security Vulnerabilities
+The pipeline processes cursor-paginated source pages inside a single MySQL transaction per page. Destination writes, rejection writes, and checkpoint updates commit together. A crash before commit rolls back the entire page so the pipeline can safely resume.
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+## HTTP endpoints
 
-## License
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/pipeline/status` | Pipeline checkpoint status |
+| GET | `/api/pipeline/loaded-count` | Count of successfully loaded records |
+| GET | `/api/pipeline/rejected-count` | Count of rejected records |
+| GET | `/api/pipeline/rejected` | Paginated rejected record details |
+| GET | `/api/pipeline/loaded` | Paginated successfully loaded records |
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+### Examples
+
+```bash
+curl http://localhost:8000/api/pipeline/status
+curl http://localhost:8000/api/pipeline/loaded-count
+curl http://localhost:8000/api/pipeline/rejected-count
+curl "http://localhost:8000/api/pipeline/rejected?per_page=10"
+curl "http://localhost:8000/api/pipeline/loaded?per_page=10"
+```
+
+## Expected results after a full run
+
+After `docker compose up --build` completes, the pipeline should load **6** valid destination records and reject **4** malformed source records.
+
+| External ID | Final version | Notes |
+|-------------|---------------|-------|
+| rec-001 | 2 | Duplicate in page 1 ignored; v2 accepted; older v1 rejected |
+| rec-002 | 1 | |
+| rec-003 | 1 | |
+| rec-004 | 2 | |
+| rec-005 | 1 | |
+| rec-006 | 1 | |
+
+Rejected records:
+
+| Error | Source page |
+|-------|-------------|
+| missing_external_id | page-4 |
+| invalid_version | page-4 |
+| invalid_updated_at | page-5 |
+| invalid_name | page-5 |
+
+## Running tests
+
+Tests that exercise MySQL-specific upsert logic require MySQL:
+
+```bash
+docker compose exec app sh -c "DB_CONNECTION=mysql DB_HOST=mysql DB_PORT=3306 DB_DATABASE=ingestion DB_USERNAME=ingestion DB_PASSWORD=secret php artisan test"
+```
+
+Unit tests for validation and HTTP retry behavior run without MySQL. Destination writer, pipeline, and API feature tests use MySQL.
+
+## Resuming after interruption
+
+The pipeline is safe to re-run:
+
+```bash
+docker compose exec app php artisan ingestion:run
+```
+
+If the process stops before a page transaction commits, the checkpoint remains at the last successful page and the interrupted page is reprocessed on the next run.
+
+## Configuration
+
+Key environment variables (see `.env.example`):
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `SOURCE_API_URL` | `http://source-api:8080/records` | Simulated source endpoint |
+| `INGESTION_PIPELINE_NAME` | `default` | Checkpoint identifier |
+| `INGESTION_MAX_RETRIES` | `5` | HTTP retry limit |
+| `INGESTION_BACKOFF_BASE_MS` | `100` | Exponential backoff base delay |
+| `INGESTION_BACKOFF_MAX_MS` | `2000` | Maximum backoff delay |
+
+## Project layout
+
+```text
+app/Services/Ingestion/     Pipeline services
+app/Console/Commands/       ingestion:run command
+app/Http/Controllers/       Status and listing endpoints
+source-api/                 Deterministic simulated HTTP source
+docker/entrypoint.sh        Automated startup script
+```
+
+See [DECISIONS.md](DECISIONS.md) for design rationale.
+
+MySQL is exposed on host port **3307** (not 3306) to avoid conflicts with local MySQL installations.
